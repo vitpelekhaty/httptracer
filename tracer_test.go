@@ -70,11 +70,7 @@ func traceEcho(client *http.Client, uri, path string, options ...Option) error {
 
 	_, err = client.Do(req)
 
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
 func TestTrace(t *testing.T) {
