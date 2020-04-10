@@ -6,14 +6,19 @@ import (
 
 // Entry trace entry
 type Entry struct {
-	Time     time.Time `json:"time"`
-	Request  string    `json:"request"`
-	Response string    `json:"response"`
-	Stat     Stat      `json:"stat"`
-	Error    error     `json:"error"`
+	// Time of request
+	Time time.Time `json:"time"`
+	// Request dump
+	Request []string `json:"request"`
+	// Response dump
+	Response []string `json:"response"`
+	// Stat request statistic
+	Stat Stat `json:"stat"`
+	// Error connection error
+	Error error `json:"error"`
 }
 
-// Stat request statistic
+// Stat request statistic (nanoseconds)
 type Stat struct {
 	DNSLookup        time.Duration `json:"dns-lookup"`
 	TCPConnection    time.Duration `json:"tcp-connection"`

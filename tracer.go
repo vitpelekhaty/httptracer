@@ -1,6 +1,8 @@
 package httptracer
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/tls"
 	"encoding/json"
 	"io"
@@ -10,26 +12,55 @@ import (
 	"time"
 )
 
+// Trace wraps a client for tracing
+func Trace(client *http.Client, options ...Option) *http.Client {
+	if client.Transport != nil {
+		tracer := New(client.Transport, options...)
+		client.Transport = tracer
+
+		return client
+	}
+
+	tracer := New(http.DefaultTransport, options...)
+	client.Transport = tracer
+
+	return client
+}
+
 // Tracer http tracer
 type Tracer struct {
 	writer    io.Writer
 	trace     *httptrace.ClientTrace
 	transport http.RoundTripper
 	bodies    bool
+	cfn       CallbackFunc
 }
 
 // Option tracer option
 type Option func(t *Tracer)
 
+// WithWriter sets a writer
 func WithWriter(writer io.Writer) Option {
 	return func(t *Tracer) {
 		t.writer = writer
 	}
 }
 
+// WithBodies indicates the need to read a request/response body
 func WithBodies(value bool) Option {
 	return func(t *Tracer) {
 		t.bodies = value
+	}
+}
+
+// CallbackFunc Tracer callback function.
+// Function called when another entry was added
+type CallbackFunc func(entry *Entry)
+
+// WithCallback sets a callback function
+func WithCallback(callback CallbackFunc) Option {
+	return func(t *Tracer) {
+		t.cfn = callback
 	}
 }
 
@@ -81,14 +112,19 @@ func New(transport http.RoundTripper, options ...Option) *Tracer {
 	return t
 }
 
+// RoundTrip implementation of http.RoundTripper interface
 func (t *Tracer) RoundTrip(req *http.Request) (*http.Response, error) {
 	entry := &Entry{Time: time.Now()}
 
 	defer func() {
-		t.writeEntry(entry)
+		if err := t.writeEntry(entry); err == nil {
+			if t.cfn != nil {
+				t.cfn(entry)
+			}
+		}
 	}()
 
-	entry.Request = string(t.requestDump(req))
+	entry.Request = t.requestDump(req)
 
 	req = req.WithContext(httptrace.WithClientTrace(req.Context(), t.trace))
 	resp, err := t.transport.RoundTrip(req)
@@ -102,7 +138,7 @@ func (t *Tracer) RoundTrip(req *http.Request) (*http.Response, error) {
 	entry.Error = err
 
 	if err == nil {
-		entry.Response = string(t.responseDump(resp))
+		entry.Response = t.responseDump(resp)
 	}
 
 	entry.Stat = t.stat(req)
@@ -126,24 +162,41 @@ func (t *Tracer) writeEntry(entry *Entry) error {
 	return err
 }
 
-func (t *Tracer) requestDump(req *http.Request) []byte {
+func (t *Tracer) requestDump(req *http.Request) []string {
 	dump, err := httputil.DumpRequest(req, t.bodies)
 
 	if err != nil {
-		return make([]byte, 0)
+		return make([]string, 0)
 	}
 
-	return dump
+	return t.dumpLines(dump)
 }
 
-func (t *Tracer) responseDump(resp *http.Response) []byte {
+func (t *Tracer) responseDump(resp *http.Response) []string {
 	dump, err := httputil.DumpResponse(resp, t.bodies)
 
 	if err != nil {
-		return make([]byte, 0)
+		return make([]string, 0)
 	}
 
-	return dump
+	return t.dumpLines(dump)
+}
+
+func (t *Tracer) dumpLines(dump []byte) []string {
+	lines := make([]string, 0)
+
+	if len(dump) == 0 {
+		return lines
+	}
+
+	scanner := bufio.NewScanner(bytes.NewReader(dump))
+	scanner.Split(bufio.ScanLines)
+
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+
+	return lines
 }
 
 func (t *Tracer) stat(req *http.Request) Stat {
