@@ -3,7 +3,6 @@ package httptracer
 import (
 	"bufio"
 	"bytes"
-	"crypto/tls"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -34,6 +33,8 @@ type Tracer struct {
 	transport http.RoundTripper
 	bodies    bool
 	cfn       CallbackFunc
+	time      [8]time.Time
+	err       error
 }
 
 // Option tracer option
@@ -64,50 +65,28 @@ func WithCallback(callback CallbackFunc) Option {
 	}
 }
 
-var times [8]time.Time
-
 // New constructor of Tracer
 func New(transport http.RoundTripper, options ...Option) *Tracer {
-	ct := &httptrace.ClientTrace{
-		GotConn: func(_ httptrace.GotConnInfo) {
-			times[3] = time.Now()
-		},
-		GotFirstResponseByte: func() {
-			times[4] = time.Now()
-		},
-		DNSStart: func(_ httptrace.DNSStartInfo) {
-			times[0] = time.Now()
-		},
-		DNSDone: func(_ httptrace.DNSDoneInfo) {
-			times[1] = time.Now()
-		},
-		ConnectStart: func(network, addr string) {
-			if times[1].IsZero() {
-				times[1] = time.Now()
-			}
-		},
-		ConnectDone: func(network, addr string, err error) {
-			if err == nil {
-				times[2] = time.Now()
-				return
-			}
-		},
-		TLSHandshakeStart: func() {
-			times[5] = time.Now()
-		},
-		TLSHandshakeDone: func(_ tls.ConnectionState, _ error) {
-			times[6] = time.Now()
-		},
-	}
-
 	t := &Tracer{
 		transport: transport,
-		trace:     ct,
 	}
 
 	for _, option := range options {
 		option(t)
 	}
+
+	ct := &httptrace.ClientTrace{
+		GotConn:              t.GotConn,
+		GotFirstResponseByte: t.GotFirstResponseByte,
+		DNSStart:             t.DNSStart,
+		DNSDone:              t.DNSDone,
+		ConnectStart:         t.ConnectStart,
+		ConnectDone:          t.ConnectDone,
+		TLSHandshakeStart:    t.TLSHandshakeStart,
+		TLSHandshakeDone:     t.TLSHandshakeDone,
+	}
+
+	t.trace = ct
 
 	return t
 }
@@ -129,19 +108,19 @@ func (t *Tracer) RoundTrip(req *http.Request) (*http.Response, error) {
 	req = req.WithContext(httptrace.WithClientTrace(req.Context(), t.trace))
 	resp, err := t.transport.RoundTrip(req)
 
-	times[7] = time.Now()
+	t.time[7] = time.Now()
 
-	if times[0].IsZero() {
-		times[0] = times[1]
+	if t.time[0].IsZero() {
+		t.time[0] = t.time[1]
 	}
 
-	entry.Error = err
+	entry.Error = t.err
 
 	if err == nil {
 		entry.Response = t.responseDump(resp)
 	}
 
-	entry.Stat = t.stat(req)
+	entry.Metric = t.metric(req)
 
 	return resp, err
 }
@@ -197,41 +176,4 @@ func (t *Tracer) dumpLines(dump []byte) []string {
 	}
 
 	return lines
-}
-
-func (t *Tracer) stat(req *http.Request) Stat {
-	switch req.URL.Scheme {
-	case "https":
-		return t.statHTTPS()
-	default:
-		return t.statHTTP()
-	}
-}
-
-func (t *Tracer) statHTTP() Stat {
-	return Stat{
-		DNSLookup:        times[1].Sub(times[0]),
-		TCPConnection:    times[3].Sub(times[1]),
-		ServerProcessing: times[4].Sub(times[3]),
-		ContentTransfer:  times[7].Sub(times[4]),
-		NameLookup:       times[1].Sub(times[0]),
-		Connect:          times[3].Sub(times[0]),
-		StartTransfer:    times[4].Sub(times[0]),
-		Total:            times[7].Sub(times[0]),
-	}
-}
-
-func (t *Tracer) statHTTPS() Stat {
-	return Stat{
-		DNSLookup:        times[1].Sub(times[0]),
-		TCPConnection:    times[2].Sub(times[1]),
-		TLSHandshake:     times[6].Sub(times[5]),
-		ServerProcessing: times[4].Sub(times[3]),
-		ContentTransfer:  times[7].Sub(times[4]),
-		NameLookup:       times[1].Sub(times[0]),
-		Connect:          times[2].Sub(times[0]),
-		PreTransfer:      times[3].Sub(times[0]),
-		StartTransfer:    times[4].Sub(times[0]),
-		Total:            times[7].Sub(times[0]),
-	}
 }
