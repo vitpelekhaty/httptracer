@@ -1,7 +1,5 @@
 Another yet simple HTTP tracer
 
-**Warning**: not threadsafe!
-
 ## Install
 
 ``
@@ -18,7 +16,7 @@ client = httptracer.Trace(client)
 ...    
 ```
 
-If you want to use your own entry handler, specify it as an option:
+Specify callback function as an option, if you want to use your own entry handler:
 ```go
 ...
 callback := func(entry *Entry) {
@@ -90,7 +88,7 @@ if err != nil {
 return nil
 ```
 
-**Sample of tracing**:
+**Output**:
 ```json
 [
   {
@@ -110,7 +108,7 @@ return nil
       "",
       "Hello, John Doe"
     ],
-    "stat":{
+    "metric":{
       "dns-lookup":0,
       "tcp-connection":579193,
       "tls-handshake":0,
